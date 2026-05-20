@@ -2,14 +2,16 @@
 # ccwatch — live dashboard of all running Claude Code instances.
 #
 # Reads the per-session JSON files written by `ccwatch-hook` and renders a
-# refreshing table. Instances with no activity in $STALE_SECS are greyed out;
-# files with no activity in $GC_SECS are garbage-collected (likely killed hard).
+# refreshing table. Instances with no activity in $STALE_SECS are greyed out.
+# A top-level session is dropped as soon as its Claude process dies (PID
+# liveness), so open-but-idle sessions stay visible indefinitely; subagent rows
+# and legacy files with no PID fall back to $GC_SECS time-based cleanup.
 #
 # Usage: ccwatch [--once] [--help] [--version]
 # Run it in its own terminal/zellij tab.  Ctrl-C to quit.
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 
 STATE_DIR="${CCWATCH_DIR:-${CLAUDE_INSTANCES_DIR:-${XDG_RUNTIME_DIR:-/tmp}/claude-instances}}"
 INTERVAL="${WATCH_INTERVAL:-2}"
@@ -98,10 +100,11 @@ while true; do
     # empty `agent` field and shift every later field over by one.) If the file
     # is unreadable or half-written, skip the row rather than letting `set -e`
     # kill the whole dashboard.
-    if ! IFS=$'\x1f' read -r label state cwd agent transcript upd since < <(
+    if ! IFS=$'\x1f' read -r label state cwd agent transcript upd since pid < <(
         jq -r '[.label // "?", .state // "?", .cwd // "", .agent // "",
                 .transcript // "", (.updated // 0 | tostring),
-                (.since // .updated // 0 | tostring)] | join("")' "$f" 2>/dev/null
+                (.since // .updated // 0 | tostring),
+                (.pid // 0 | tostring)] | join("")' "$f" 2>/dev/null
       ); then
       continue
     fi
@@ -122,9 +125,20 @@ while true; do
       tmt=$(stat -c %Y "$transcript" 2>/dev/null || stat -f %m "$transcript" 2>/dev/null || echo 0)
       ((tmt>last)) && last=$tmt
     fi
-    idle=$((now-last))   # since last activity -> staleness / GC
+    idle=$((now-last))   # since last activity -> staleness (and GC fallback)
     age=$((now-since))   # time in current state -> AGE display
-    ((idle>GC_SECS)) && { rm -f "$f"; continue; }
+    # When to drop a row:
+    #  - Top-level session with a known PID: keep it as long as that process is
+    #    alive, so an open-but-idle session never disappears; drop it the moment
+    #    the process is gone (clean exit already removes the file via SessionEnd;
+    #    this catches hard kills).
+    #  - Subagent rows (share the parent's PID) and legacy files without a PID:
+    #    fall back to time-based GC, since we can't detect their owner's death.
+    if [[ -z "$agent" && "$pid" =~ ^[0-9]+$ ]] && ((pid>1)); then
+      kill -0 "$pid" 2>/dev/null || { rm -f "$f"; continue; }
+    else
+      ((idle>GC_SECS)) && { rm -f "$f"; continue; }
+    fi
     printf -v agestr '%-*s' "$W_AGE" "$(human_age "$age")"
     if ((idle>STALE_SECS)); then
       # Stale: same columns, but force the whole row dim and tag the dir.

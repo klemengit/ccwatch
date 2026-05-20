@@ -68,7 +68,12 @@ runs.
 
 **AGE** is *time in the current state* (it does not reset on the per-tool
 heartbeat). A row goes `(stale)` and greys out after `STALE_SECS` without any
-activity, and is removed entirely after `GC_SECS` (e.g. a hard-killed session).
+activity, but **stays visible** — an open session is never removed just for
+being idle. A top-level session is dropped only when its Claude process is gone:
+a clean exit removes it via `SessionEnd`, and a hard kill is caught because
+`ccwatch` records each session's process id and checks whether it's still alive.
+`GC_SECS` time-based cleanup now only applies to subagent (`↳`) rows and to
+legacy state files written before this feature (which carry no PID).
 
 ### Configuration (env vars)
 
@@ -76,7 +81,7 @@ activity, and is removed entirely after `GC_SECS` (e.g. a hard-killed session).
 |-------------------|-------------------------------------------|------------------------------------------|
 | `WATCH_INTERVAL`  | `2`                                       | Refresh interval (seconds).              |
 | `STALE_SECS`      | `60`                                      | Idle time before a row greys out.        |
-| `GC_SECS`         | `1800`                                    | Idle time before a row is removed.       |
+| `GC_SECS`         | `1800`                                    | Idle time before a row is removed (subagent rows / legacy no-PID files only). |
 | `CCWATCH_DIR`     | `$XDG_RUNTIME_DIR/claude-instances`       | Where session state files live.          |
 
 Example: `STALE_SECS=25 WATCH_INTERVAL=1 ccwatch`
@@ -94,9 +99,12 @@ Example: `STALE_SECS=25 WATCH_INTERVAL=1 ccwatch`
   (removed on completion; stale/GC clean them up if `SubagentStop` doesn't
   fire — see Limitations)
 
-Each event writes `$CCWATCH_DIR/<session_id>.json` with the state plus two
-timestamps: `updated` (last activity, drives staleness) and `since` (when the
-state last changed, drives AGE). `ccwatch` just renders those files.
+Each event writes `$CCWATCH_DIR/<session_id>.json` with the state, two
+timestamps — `updated` (last activity, drives staleness) and `since` (when the
+state last changed, drives AGE) — and `pid`, the owning Claude Code process id
+(found by walking up the hook's process ancestry to the `claude` process).
+`ccwatch` renders those files and uses `pid` to tell open sessions from dead
+ones.
 
 The **PROJECT** label is the name of the session's enclosing git repository
 (so any subdirectory of the same repo shows the same name); outside a repo it

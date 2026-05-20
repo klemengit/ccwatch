@@ -32,6 +32,38 @@ project_label() {
   name="${dir##*/}"; echo "${name:-/}"
 }
 
+# PID of the owning Claude Code process, recorded so ccwatch can keep an
+# open-but-idle session visible and only drop it once that process is gone.
+# This hook runs as a (grand)child of `claude`, so walk up the ancestry until we
+# find it; fall back to the immediate parent if not. Pure /proc on Linux (cheap,
+# since this runs on every tool call); `ps` fallback elsewhere.
+_ppid_of() { # $1=pid -> parent pid
+  local p="$1" line
+  if [[ -r "/proc/$p/stat" ]]; then
+    line="$(< "/proc/$p/stat")"; line="${line#*") "}"  # drop "PID (comm) "
+    set -- $line; echo "$2"                            # state ppid pgrp ...
+  else
+    ps -o ppid= -p "$p" 2>/dev/null | tr -d ' '
+  fi
+}
+_comm_of() { # $1=pid -> process name
+  local p="$1"
+  if [[ -r "/proc/$p/comm" ]]; then
+    printf '%s' "$(< "/proc/$p/comm")"
+  else
+    ps -o comm= -p "$p" 2>/dev/null | sed 's:.*/::'
+  fi
+}
+session_pid() {
+  local p="${PPID:-0}" hops=0 c
+  while [[ "$p" =~ ^[0-9]+$ ]] && ((p>1 && hops<12)); do
+    c="$(_comm_of "$p")"
+    [[ "$c" == claude ]] && { echo "$p"; return; }
+    p="$(_ppid_of "$p")"; hops=$((hops+1))
+  done
+  echo "${PPID:-0}"
+}
+
 payload="$(cat)"
 
 session_id="$(jq -r '.session_id // "unknown"' <<<"$payload")"
@@ -87,6 +119,7 @@ esac
 label="$(project_label "$cwd")"
 
 now="$(date +%s)"
+pid="$(session_pid)"; [[ "$pid" =~ ^[0-9]+$ ]] || pid=0
 
 # `updated` = this hook (drives staleness). `since` = when the state last
 # CHANGED (drives the AGE display), so heartbeats and other same-state updates
@@ -117,7 +150,8 @@ jq -n \
   --arg transcript "$transcript" \
   --argjson ts "$now" \
   --argjson since "$since" \
-  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, transcript:$transcript, updated:$ts, since:$since}' \
+  --argjson pid "$pid" \
+  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, transcript:$transcript, pid:$pid, updated:$ts, since:$since}' \
   >"$tmp" && mv -f "$tmp" "$file"
 
 exit 0
