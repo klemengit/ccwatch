@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# ccwatch-hook — Claude Code state-tracking hook.
+#
+# Reads the hook JSON on stdin, derives a state, and writes it to a per-session
+# file in the shared registry. Wired to several hook events in settings.json by
+# the installer; the event name and (for Notification) the notification_type
+# drive the state.
+#
+# Registry layout: $CCWATCH_DIR/<session_id>.json
+set -euo pipefail
+
+STATE_DIR="${CCWATCH_DIR:-${CLAUDE_INSTANCES_DIR:-${XDG_RUNTIME_DIR:-/tmp}/claude-instances}}"
+mkdir -p "$STATE_DIR"
+
+payload="$(cat)"
+
+session_id="$(jq -r '.session_id // "unknown"' <<<"$payload")"
+cwd="$(jq -r '.cwd // ""' <<<"$payload")"
+event="$(jq -r '.hook_event_name // ""' <<<"$payload")"
+notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
+
+case "$event" in
+  SessionStart)     state="running" ;;
+  UserPromptSubmit) state="working" ;;
+  PostToolUse)      state="working" ;;  # heartbeat: fires on every tool call
+  Stop)             state="done" ;;
+  Notification)
+    case "$notif_type" in
+      permission_prompt) state="needs_permission" ;;
+      idle_prompt)       state="waiting_input" ;;
+      *)                 state="notified" ;;
+    esac ;;
+  SessionEnd)
+    rm -f "$STATE_DIR/$session_id.json"
+    exit 0 ;;
+  *) state="active" ;;
+esac
+
+# Short, human label for the instance: the basename of its working dir.
+label="$(basename "${cwd:-unknown}")"
+
+now="$(date +%s)"
+file="$STATE_DIR/$session_id.json"
+
+# `updated` = this hook (drives staleness). `since` = when the state last
+# CHANGED (drives the AGE display), so heartbeats and other same-state updates
+# don't reset AGE. Carry `since` forward when the state is unchanged.
+since="$now"
+if [[ -f "$file" ]]; then
+  prev_state="$(jq -r '.state // ""' "$file" 2>/dev/null || echo "")"
+  if [[ "$prev_state" == "$state" ]]; then
+    since="$(jq -r '.since // .updated // empty' "$file" 2>/dev/null || echo "$now")"
+    [[ -z "$since" ]] && since="$now"
+  fi
+fi
+
+jq -n \
+  --arg id "$session_id" \
+  --arg cwd "$cwd" \
+  --arg label "$label" \
+  --arg state "$state" \
+  --arg event "$event" \
+  --argjson ts "$now" \
+  --argjson since "$since" \
+  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, updated:$ts, since:$since}' \
+  >"$file"
+
+exit 0

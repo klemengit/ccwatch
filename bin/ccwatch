@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# ccwatch — live dashboard of all running Claude Code instances.
+#
+# Reads the per-session JSON files written by `ccwatch-hook` and renders a
+# refreshing table. Instances with no activity in $STALE_SECS are greyed out;
+# files with no activity in $GC_SECS are garbage-collected (likely killed hard).
+#
+# Usage: ccwatch [--once] [--help] [--version]
+# Run it in its own terminal/zellij tab.  Ctrl-C to quit.
+set -euo pipefail
+
+VERSION="0.1.0"
+
+STATE_DIR="${CCWATCH_DIR:-${CLAUDE_INSTANCES_DIR:-${XDG_RUNTIME_DIR:-/tmp}/claude-instances}}"
+INTERVAL="${WATCH_INTERVAL:-2}"
+STALE_SECS="${STALE_SECS:-60}"
+GC_SECS="${GC_SECS:-1800}"
+
+ONCE=0
+for a in "$@"; do
+  case "$a" in
+    -1|--once)    ONCE=1 ;;
+    -v|--version) echo "ccwatch $VERSION"; exit 0 ;;
+    -h|--help)
+      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "ccwatch: unknown argument: $a" >&2; exit 2 ;;
+  esac
+done
+
+command -v jq >/dev/null || { echo "ccwatch: requires 'jq'." >&2; exit 1; }
+mkdir -p "$STATE_DIR"
+
+# Colors
+c_reset=$'\e[0m'; c_dim=$'\e[2m'; c_bold=$'\e[1m'
+c_green=$'\e[32m'; c_yellow=$'\e[33m'; c_red=$'\e[31m'; c_cyan=$'\e[36m'
+
+# Column widths (in display columns).
+W_LABEL=18; W_EMOJI=2; W_WORD=13; W_AGE=6
+# Total STATE column = emoji(2) + space(1) + word(13) = 16.
+W_STATE=$((W_EMOJI + 1 + W_WORD))
+
+# Maps a state to EMOJI / WORD / COLOR (set as globals). All emoji are chosen
+# to render 2 columns wide so the column stays aligned; unknown states use two
+# spaces as a same-width placeholder.
+state_meta() {
+  case "$1" in
+    working)          EMOJI='⏳'; WORD='working';       COLOR=$c_cyan ;;
+    done)             EMOJI='✅'; WORD='done';          COLOR=$c_green ;;
+    waiting_input)    EMOJI='✅'; WORD='waiting_input'; COLOR=$c_green ;;
+    needs_permission) EMOJI='🔔'; WORD='needs perm';    COLOR=$c_red ;;
+    running)          EMOJI='🟢'; WORD='running';       COLOR=$c_green ;;
+    *)                EMOJI='  '; WORD="$1";            COLOR=$c_dim ;;
+  esac
+}
+
+# Builds the colored, fixed-width STATE cell. Pads the plain WORD first (so the
+# width is measured on visible chars, not escape codes), then wraps in color.
+state_cell() { # $1=state $2=color-override(optional) -> echoes cell
+  state_meta "$1"
+  local color="${2:-$COLOR}" padded
+  printf -v padded '%-*s' "$W_WORD" "$WORD"
+  printf '%s%s %s%s' "$color" "$EMOJI" "$padded" "$c_reset"
+}
+
+human_age() { local s=$1; ((s<60)) && { echo "${s}s"; return; }; ((s<3600)) && { echo "$((s/60))m"; return; }; echo "$((s/3600))h"; }
+
+el=$'\e[K'  # clear from cursor to end of line
+
+if ((!ONCE)); then
+  trap 'tput cnorm 2>/dev/null; printf "\e[2J\e[H"; exit 0' INT TERM
+  tput civis 2>/dev/null || true
+  printf '\e[2J'  # full clear once at startup; thereafter we repaint in place
+fi
+
+while true; do
+  now=$(date +%s)
+
+  # Build the entire frame in memory, then paint it in a single write. Each
+  # line ends with $el so it overwrites the old line's tail without a flicker,
+  # and a trailing \e[J wipes any leftover rows from a previous, longer frame.
+  frame=""
+  printf -v line '%s ccwatch — Claude Code instances %s %s(%s, refresh %ss)%s' \
+    "$c_bold" "$c_reset" "$c_dim" "$(date '+%H:%M:%S')" "$INTERVAL" "$c_reset"
+  frame+="$line$el"$'\n'"$el"$'\n'
+  printf -v line '%s  %-*s %-*s %-*s %s%s' \
+    "$c_dim" "$W_LABEL" "PROJECT" "$W_STATE" "STATE" "$W_AGE" "AGE" "DIR" "$c_reset"
+  frame+="$line$el"$'\n'
+
+  shopt -s nullglob
+  files=("$STATE_DIR"/*.json)
+  if ((${#files[@]}==0)); then
+    printf -v line '  %s(no active instances)%s' "$c_dim" "$c_reset"
+    frame+="$line$el"$'\n'
+  fi
+  # Sort by most-recently updated first.
+  for f in $(ls -t "$STATE_DIR"/*.json 2>/dev/null); do
+    label=$(jq -r '.label // "?"' "$f")
+    state=$(jq -r '.state // "?"' "$f")
+    cwd=$(jq -r '.cwd // ""' "$f")
+    upd=$(jq -r '.updated // 0' "$f")
+    since=$(jq -r '.since // .updated // 0' "$f")
+    idle=$((now-upd))    # since last activity -> staleness / GC
+    age=$((now-since))   # time in current state -> AGE display
+    ((idle>GC_SECS)) && { rm -f "$f"; continue; }
+    printf -v agestr '%-*s' "$W_AGE" "$(human_age "$age")"
+    if ((idle>STALE_SECS)); then
+      # Stale: same columns, but force the whole row dim and tag the dir.
+      cell="$(state_cell "$state" "$c_dim")"
+      printf -v line '%s  %-*s %b %s %s (stale)%s' \
+        "$c_dim" "$W_LABEL" "$label" "$cell" "$agestr" "$cwd" "$c_reset"
+    else
+      cell="$(state_cell "$state")"
+      printf -v line '  %-*s %b %s %s%s%s' \
+        "$W_LABEL" "$label" "$cell" "$agestr" "$c_dim" "$cwd" "$c_reset"
+    fi
+    frame+="$line$el"$'\n'
+  done
+
+  if ((ONCE)); then
+    printf '%s' "$frame"
+    break
+  fi
+  # Home, paint, then clear to end of screen — one atomic-ish write, no flash.
+  printf '\e[H%s\e[J' "$frame"
+  sleep "$INTERVAL"
+done
