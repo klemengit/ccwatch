@@ -6,6 +6,11 @@
 # the installer; the event name and (for Notification) the notification_type
 # drive the state.
 #
+# Background subagents (Agent/Task tool) get their own session_id and carry
+# agent_id/agent_type in the payload. They are tracked as separate, tagged rows
+# (agent field set) and removed on Subagent/Stop; the dashboard's stale/GC rules
+# clean them up if those completion events don't fire (Claude Code issue #33049).
+#
 # Registry layout: $CCWATCH_DIR/<session_id>.json
 set -euo pipefail
 
@@ -18,21 +23,38 @@ session_id="$(jq -r '.session_id // "unknown"' <<<"$payload")"
 cwd="$(jq -r '.cwd // ""' <<<"$payload")"
 event="$(jq -r '.hook_event_name // ""' <<<"$payload")"
 notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
+agent_id="$(jq -r '.agent_id // ""' <<<"$payload")"
+agent_type="$(jq -r '.agent_type // ""' <<<"$payload")"
+
+file="$STATE_DIR/$session_id.json"
+
+# Is this a subagent context? (own session_id + agent_id/agent_type, or a
+# Subagent* event). The label tag we store; empty for top-level sessions.
+agent=""
+if [[ -n "$agent_id" || -n "$agent_type" || "$event" == Subagent* ]]; then
+  agent="${agent_type:-agent}"
+fi
+
+# Events that remove the entry: session ended, or a subagent finished. A Stop in
+# a subagent context also means that subagent is done.
+if [[ "$event" == "SessionEnd" || "$event" == "SubagentStop" \
+   || ( -n "$agent" && "$event" == "Stop" ) ]]; then
+  rm -f "$file"
+  exit 0
+fi
 
 case "$event" in
   SessionStart)     state="running" ;;
+  SubagentStart)    state="running" ;;
   UserPromptSubmit) state="working" ;;
   PostToolUse)      state="working" ;;  # heartbeat: fires on every tool call
-  Stop)             state="done" ;;
+  Stop)             state="done" ;;     # (top-level only; subagent Stop removed above)
   Notification)
     case "$notif_type" in
       permission_prompt) state="needs_permission" ;;
       idle_prompt)       state="waiting_input" ;;
       *)                 state="notified" ;;
     esac ;;
-  SessionEnd)
-    rm -f "$STATE_DIR/$session_id.json"
-    exit 0 ;;
   *) state="active" ;;
 esac
 
@@ -40,7 +62,6 @@ esac
 label="$(basename "${cwd:-unknown}")"
 
 now="$(date +%s)"
-file="$STATE_DIR/$session_id.json"
 
 # `updated` = this hook (drives staleness). `since` = when the state last
 # CHANGED (drives the AGE display), so heartbeats and other same-state updates
@@ -60,9 +81,10 @@ jq -n \
   --arg label "$label" \
   --arg state "$state" \
   --arg event "$event" \
+  --arg agent "$agent" \
   --argjson ts "$now" \
   --argjson since "$since" \
-  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, updated:$ts, since:$since}' \
+  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, updated:$ts, since:$since}' \
   >"$file"
 
 exit 0

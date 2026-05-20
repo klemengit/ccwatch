@@ -98,6 +98,13 @@ while true; do
     label=$(jq -r '.label // "?"' "$f")
     state=$(jq -r '.state // "?"' "$f")
     cwd=$(jq -r '.cwd // ""' "$f")
+    agent=$(jq -r '.agent // ""' "$f")
+    # Tag background subagents so they're visibly not the top-level session.
+    [[ -n "$agent" ]] && label="↳ $label"
+    # Pad LABEL by display width (chars), not bytes — '↳' is multi-byte but
+    # one column, so printf's %-Ns would otherwise misalign tagged rows.
+    lpad=$((W_LABEL - ${#label})); ((lpad<0)) && lpad=0
+    printf -v labelcell '%s%*s' "$label" "$lpad" ''
     upd=$(jq -r '.updated // 0' "$f")
     since=$(jq -r '.since // .updated // 0' "$f")
     idle=$((now-upd))    # since last activity -> staleness / GC
@@ -107,12 +114,12 @@ while true; do
     if ((idle>STALE_SECS)); then
       # Stale: same columns, but force the whole row dim and tag the dir.
       cell="$(state_cell "$state" "$c_dim")"
-      printf -v line '%s  %-*s %b %s %s (stale)%s' \
-        "$c_dim" "$W_LABEL" "$label" "$cell" "$agestr" "$cwd" "$c_reset"
+      printf -v line '%s  %s %b %s %s (stale)%s' \
+        "$c_dim" "$labelcell" "$cell" "$agestr" "$cwd" "$c_reset"
     else
       cell="$(state_cell "$state")"
-      printf -v line '  %-*s %b %s %s%s%s' \
-        "$W_LABEL" "$label" "$cell" "$agestr" "$c_dim" "$cwd" "$c_reset"
+      printf -v line '  %s %b %s %s%s%s' \
+        "$labelcell" "$cell" "$agestr" "$c_dim" "$cwd" "$c_reset"
     fi
     frame+="$line$el"$'\n'
   done

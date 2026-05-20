@@ -59,6 +59,11 @@ ccwatch --version
 | ✅ `waiting_input`  | Idle at the prompt, waiting for your next message.   |
 | *(dim)* `(stale)`  | No activity for a while — may be interrupted or idle.|
 
+Background **subagents** (Agent/Task tool) run under their own session id, so
+they appear as separate rows prefixed with `↳`. Your top-level session still
+shows its own state (e.g. `done`) and stays promptable while the `↳` subagent
+runs.
+
 **AGE** is *time in the current state* (it does not reset on the per-tool
 heartbeat). A row goes `(stale)` and greys out after `STALE_SECS` without any
 activity, and is removed entirely after `GC_SECS` (e.g. a hard-killed session).
@@ -83,6 +88,9 @@ Example: `STALE_SECS=25 WATCH_INTERVAL=1 ccwatch`
 - `Notification` → `needs perm` / `waiting_input`
 - `Stop` → `done`
 - `SessionEnd` → removes the session
+- `SubagentStart`/`SubagentStop` → tracks background subagents as `↳` rows
+  (removed on completion; stale/GC clean them up if `SubagentStop` doesn't
+  fire — see Limitations)
 
 Each event writes `~$CCWATCH_DIR/<session_id>.json` with the state plus two
 timestamps: `updated` (last activity, drives staleness) and `since` (when the
@@ -95,6 +103,9 @@ state last changed, drives AGE). `ccwatch` just renders those files.
   `STALE_SECS` it greys out. (Lower `STALE_SECS` if you want that sooner.)
 - A single tool call longer than `STALE_SECS` will briefly show `(stale)` even
   though it's genuinely working.
+- **Background subagent completion is unreliable.** Claude Code doesn't always
+  fire `SubagentStop` for background subagents (issue #33049), so a finished
+  `↳` row may linger until it goes stale (`STALE_SECS`) and is GC'd (`GC_SECS`).
 
 ## Uninstall
 
