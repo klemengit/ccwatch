@@ -41,6 +41,7 @@ notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
 tool_name="$(jq -r '.tool_name // ""' <<<"$payload")"
 agent_id="$(jq -r '.agent_id // ""' <<<"$payload")"
 agent_type="$(jq -r '.agent_type // ""' <<<"$payload")"
+transcript="$(jq -r '.transcript_path // ""' <<<"$payload")"
 
 file="$STATE_DIR/$session_id.json"
 
@@ -97,8 +98,15 @@ if [[ -f "$file" ]]; then
     since="$(jq -r '.since // .updated // empty' "$file" 2>/dev/null || echo "$now")"
     [[ -z "$since" ]] && since="$now"
   fi
+  # Carry forward the transcript path if this event didn't include one.
+  if [[ -z "$transcript" ]]; then
+    transcript="$(jq -r '.transcript // empty' "$file" 2>/dev/null || echo "")"
+  fi
 fi
 
+# Write atomically (temp file + rename) so a concurrent reader (ccwatch) never
+# sees a half-written file.
+tmp="$file.tmp.$$"
 jq -n \
   --arg id "$session_id" \
   --arg cwd "$cwd" \
@@ -106,9 +114,10 @@ jq -n \
   --arg state "$state" \
   --arg event "$event" \
   --arg agent "$agent" \
+  --arg transcript "$transcript" \
   --argjson ts "$now" \
   --argjson since "$since" \
-  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, updated:$ts, since:$since}' \
-  >"$file"
+  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, transcript:$transcript, updated:$ts, since:$since}' \
+  >"$tmp" && mv -f "$tmp" "$file"
 
 exit 0

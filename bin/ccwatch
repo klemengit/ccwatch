@@ -93,19 +93,36 @@ while true; do
   fi
   # Sort by most-recently updated first.
   for f in $(ls -t "$STATE_DIR"/*.json 2>/dev/null); do
-    label=$(jq -r '.label // "?"' "$f")
-    state=$(jq -r '.state // "?"' "$f")
-    cwd=$(jq -r '.cwd // ""' "$f")
-    agent=$(jq -r '.agent // ""' "$f")
+    # One robust read of all fields, separated by ASCII Unit Separator (0x1f).
+    # (Don't use tab: it's an IFS whitespace char, so `read` would collapse the
+    # empty `agent` field and shift every later field over by one.) If the file
+    # is unreadable or half-written, skip the row rather than letting `set -e`
+    # kill the whole dashboard.
+    if ! IFS=$'\x1f' read -r label state cwd agent transcript upd since < <(
+        jq -r '[.label // "?", .state // "?", .cwd // "", .agent // "",
+                .transcript // "", (.updated // 0 | tostring),
+                (.since // .updated // 0 | tostring)] | join("")' "$f" 2>/dev/null
+      ); then
+      continue
+    fi
+    [[ -z "$state" ]] && continue
     # Tag background subagents so they're visibly not the top-level session.
     [[ -n "$agent" ]] && label="↳ $label"
     # Pad LABEL by display width (chars), not bytes — '↳' is multi-byte but
     # one column, so printf's %-Ns would otherwise misalign tagged rows.
     lpad=$((W_LABEL - ${#label})); ((lpad<0)) && lpad=0
     printf -v labelcell '%s%*s' "$label" "$lpad" ''
-    upd=$(jq -r '.updated // 0' "$f")
-    since=$(jq -r '.since // .updated // 0' "$f")
-    idle=$((now-upd))    # since last activity -> staleness / GC
+
+    # Liveness: a long operation (e.g. extended thinking) fires no hooks, so also
+    # count recent transcript writes as activity — otherwise a busy session would
+    # wrongly go stale and eventually get GC'd. idle = now - newest of
+    # {last hook, transcript mtime}.
+    last=$upd
+    if [[ -n "$transcript" && -f "$transcript" ]]; then
+      tmt=$(stat -c %Y "$transcript" 2>/dev/null || stat -f %m "$transcript" 2>/dev/null || echo 0)
+      ((tmt>last)) && last=$tmt
+    fi
+    idle=$((now-last))   # since last activity -> staleness / GC
     age=$((now-since))   # time in current state -> AGE display
     ((idle>GC_SECS)) && { rm -f "$f"; continue; }
     printf -v agestr '%-*s' "$W_AGE" "$(human_age "$age")"
