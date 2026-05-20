@@ -10,10 +10,10 @@ been in that state, and its directory:
  ccwatch — Claude Code instances  (14:22:07, refresh 2s)
 
   PROJECT            STATE            AGE    DIR
-  epsilon            🟢 running       4s     ~/src/epsilon
   alpha              ⏳ working       42s    ~/projects/alpha
-  beta               🔔 needs perm    10s    ~/projects/beta
-  gamma              ✅ done          17s    ~/work/gamma
+  beta               🔔 waiting input 10s    ~/projects/beta
+  gamma              💤 idle          1m     ~/work/gamma
+  ↳ alpha            ⏳ working       8s     ~/projects/alpha
   eta                ⏳ working       2m     ~/old/eta (stale)
 ```
 
@@ -63,7 +63,7 @@ ccwatch --version
 
 Background **subagents** (Agent/Task tool) run under their own session id, so
 they appear as separate rows prefixed with `↳`. Your top-level session still
-shows its own state (e.g. `done`) and stays promptable while the `↳` subagent
+shows its own state (e.g. `idle`) and stays promptable while the `↳` subagent
 runs.
 
 **AGE** is *time in the current state* (it does not reset on the per-tool
@@ -94,7 +94,7 @@ Example: `STALE_SECS=25 WATCH_INTERVAL=1 ccwatch`
   (removed on completion; stale/GC clean them up if `SubagentStop` doesn't
   fire — see Limitations)
 
-Each event writes `~$CCWATCH_DIR/<session_id>.json` with the state plus two
+Each event writes `$CCWATCH_DIR/<session_id>.json` with the state plus two
 timestamps: `updated` (last activity, drives staleness) and `since` (when the
 state last changed, drives AGE). `ccwatch` just renders those files.
 
