@@ -52,12 +52,14 @@ ccwatch --version
 
 | State              | Meaning                                              |
 |--------------------|------------------------------------------------------|
-| 🟢 `running`        | Session just started.                                |
 | ⏳ `working`        | Claude is processing your prompt / running tools.    |
-| 🔔 `needs perm`     | Blocked waiting for you to approve a tool.           |
-| ✅ `done`           | Claude finished responding.                          |
-| ✅ `waiting_input`  | Idle at the prompt, waiting for your next message.   |
-| *(dim)* `(stale)`  | No activity for a while — may be interrupted or idle.|
+| 🔔 `waiting input` | Blocked on you — a tool-permission approval or an answer to a question / elicitation form. |
+| 💤 `idle`           | Not doing anything — finished, or freshly started.   |
+| *(dim)* `(stale)`  | No activity for a while — may be interrupted.        |
+
+> Note: a multiple-choice question (the `AskUserQuestion` tool) is detected via
+> its `PreToolUse`/`PostToolUse` events. Tool-permission prompts use the
+> `PermissionRequest`/`Notification` hooks.
 
 Background **subagents** (Agent/Task tool) run under their own session id, so
 they appear as separate rows prefixed with `↳`. Your top-level session still
@@ -83,10 +85,10 @@ Example: `STALE_SECS=25 WATCH_INTERVAL=1 ccwatch`
 
 `install.sh` adds `ccwatch-hook` to these Claude Code hook events:
 
-- `SessionStart` → `running`
-- `UserPromptSubmit` / `PostToolUse` → `working` (PostToolUse is the heartbeat)
-- `Notification` → `needs perm` / `waiting_input`
-- `Stop` → `done`
+- `SessionStart` / `Stop` → `idle`
+- `UserPromptSubmit` / `PostToolUse` / `PreToolUse` → `working` (PostToolUse is the heartbeat)
+- `PreToolUse`(AskUserQuestion) / `PermissionRequest` / `Notification`(permission_prompt, elicitation_dialog) → `waiting input`
+- `Notification`(idle_prompt) → `idle`
 - `SessionEnd` → removes the session
 - `SubagentStart`/`SubagentStop` → tracks background subagents as `↳` rows
   (removed on completion; stale/GC clean them up if `SubagentStop` doesn't

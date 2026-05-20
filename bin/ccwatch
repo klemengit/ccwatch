@@ -9,7 +9,7 @@
 # Run it in its own terminal/zellij tab.  Ctrl-C to quit.
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.3.0"
 
 STATE_DIR="${CCWATCH_DIR:-${CLAUDE_INSTANCES_DIR:-${XDG_RUNTIME_DIR:-/tmp}/claude-instances}}"
 INTERVAL="${WATCH_INTERVAL:-2}"
@@ -45,12 +45,10 @@ W_STATE=$((W_EMOJI + 1 + W_WORD))
 # spaces as a same-width placeholder.
 state_meta() {
   case "$1" in
-    working)          EMOJI='⏳'; WORD='working';       COLOR=$c_cyan ;;
-    done)             EMOJI='✅'; WORD='done';          COLOR=$c_green ;;
-    waiting_input)    EMOJI='✅'; WORD='waiting_input'; COLOR=$c_green ;;
-    needs_permission) EMOJI='🔔'; WORD='needs perm';    COLOR=$c_red ;;
-    running)          EMOJI='🟢'; WORD='running';       COLOR=$c_green ;;
-    *)                EMOJI='  '; WORD="$1";            COLOR=$c_dim ;;
+    working)       EMOJI='⏳'; WORD='working';       COLOR=$c_cyan ;;
+    waiting_input) EMOJI='🔔'; WORD='waiting input'; COLOR=$c_yellow ;;
+    idle)          EMOJI='💤'; WORD='idle';          COLOR=$c_green ;;
+    *)             EMOJI='  '; WORD="$1";            COLOR=$c_dim ;;
   esac
 }
 

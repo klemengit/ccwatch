@@ -23,6 +23,7 @@ session_id="$(jq -r '.session_id // "unknown"' <<<"$payload")"
 cwd="$(jq -r '.cwd // ""' <<<"$payload")"
 event="$(jq -r '.hook_event_name // ""' <<<"$payload")"
 notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
+tool_name="$(jq -r '.tool_name // ""' <<<"$payload")"
 agent_id="$(jq -r '.agent_id // ""' <<<"$payload")"
 agent_type="$(jq -r '.agent_type // ""' <<<"$payload")"
 
@@ -43,19 +44,27 @@ if [[ "$event" == "SessionEnd" || "$event" == "SubagentStop" \
   exit 0
 fi
 
+# Three states: idle (not doing anything), working (processing), waiting_input
+# (blocked on the user: a tool-permission approval, or an answer to a question
+# / elicitation form).
 case "$event" in
-  SessionStart)     state="running" ;;
-  SubagentStart)    state="running" ;;
-  UserPromptSubmit) state="working" ;;
-  PostToolUse)      state="working" ;;  # heartbeat: fires on every tool call
-  Stop)             state="done" ;;     # (top-level only; subagent Stop removed above)
+  SessionStart)      state="idle" ;;
+  Stop)              state="idle" ;;     # (top-level only; subagent Stop removed above)
+  UserPromptSubmit)  state="working" ;;
+  PostToolUse)       state="working" ;;  # heartbeat: fires on every tool call
+  SubagentStart)     state="working" ;;
+  PreToolUse)
+    # AskUserQuestion blocks for the user's answer (no Notification fires for it);
+    # every other tool means Claude is actively working.
+    if [[ "$tool_name" == "AskUserQuestion" ]]; then state="waiting_input"; else state="working"; fi ;;
+  PermissionRequest) state="waiting_input" ;;
   Notification)
     case "$notif_type" in
-      permission_prompt) state="needs_permission" ;;
-      idle_prompt)       state="waiting_input" ;;
-      *)                 state="notified" ;;
+      permission_prompt|elicitation_dialog) state="waiting_input" ;;
+      idle_prompt)                          state="idle" ;;
+      *)                                    state="working" ;;
     esac ;;
-  *) state="active" ;;
+  *) state="working" ;;
 esac
 
 # Short, human label for the instance: the basename of its working dir.

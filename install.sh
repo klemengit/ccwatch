@@ -18,7 +18,7 @@ REPO_RAW="${CCWATCH_REPO_RAW:-https://raw.githubusercontent.com/klemengit/ccwatc
 BIN_DIR="${CCWATCH_BIN:-$HOME/.local/bin}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 HOOK_TIMEOUT=5
-EVENTS=(SessionStart UserPromptSubmit PostToolUse Stop Notification SessionEnd SubagentStart SubagentStop)
+EVENTS=(SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Stop Notification SessionEnd SubagentStart SubagentStop)
 
 die() { echo "ccwatch install: $*" >&2; exit 1; }
 info() { echo "  $*"; }

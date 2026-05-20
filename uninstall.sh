@@ -6,7 +6,7 @@ set -euo pipefail
 BIN_DIR="${CCWATCH_BIN:-$HOME/.local/bin}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 HOOK_CMD="$BIN_DIR/ccwatch-hook"
-EVENTS=(SessionStart UserPromptSubmit PostToolUse Stop Notification SessionEnd SubagentStart SubagentStop)
+EVENTS=(SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Stop Notification SessionEnd SubagentStart SubagentStop)
 
 command -v jq >/dev/null || { echo "uninstall: requires 'jq'." >&2; exit 1; }
 
