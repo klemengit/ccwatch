@@ -17,6 +17,21 @@ set -euo pipefail
 STATE_DIR="${CCWATCH_DIR:-${CLAUDE_INSTANCES_DIR:-${XDG_RUNTIME_DIR:-/tmp}/claude-instances}}"
 mkdir -p "$STATE_DIR"
 
+# Project label = name of the enclosing git repo root, so every subdirectory of
+# the same project shows the same name. Falls back to the cwd basename when not
+# in a repo. Pure Bash (no `git` subprocess) since this runs on every tool call.
+project_label() {
+  local dir="$1" d name
+  [[ -z "$dir" ]] && { echo "unknown"; return; }
+  d="$dir"
+  while [[ -n "$d" ]]; do
+    if [[ -e "$d/.git" ]]; then name="${d##*/}"; echo "${name:-/}"; return; fi
+    [[ "$d" == "/" ]] && break
+    d="${d%/*}"; [[ -z "$d" ]] && d="/"
+  done
+  name="${dir##*/}"; echo "${name:-/}"
+}
+
 payload="$(cat)"
 
 session_id="$(jq -r '.session_id // "unknown"' <<<"$payload")"
@@ -67,8 +82,8 @@ case "$event" in
   *) state="working" ;;
 esac
 
-# Short, human label for the instance: the basename of its working dir.
-label="$(basename "${cwd:-unknown}")"
+# Human label for the instance: the enclosing git repo name (else cwd basename).
+label="$(project_label "$cwd")"
 
 now="$(date +%s)"
 

@@ -98,6 +98,10 @@ Each event writes `$CCWATCH_DIR/<session_id>.json` with the state plus two
 timestamps: `updated` (last activity, drives staleness) and `since` (when the
 state last changed, drives AGE). `ccwatch` just renders those files.
 
+The **PROJECT** label is the name of the session's enclosing git repository
+(so any subdirectory of the same repo shows the same name); outside a repo it
+falls back to the working directory's basename.
+
 ## Limitations
 
 - **Interrupts aren't detected.** Claude Code fires no hook on Ctrl-C, so an
