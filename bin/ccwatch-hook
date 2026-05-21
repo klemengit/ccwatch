@@ -118,6 +118,30 @@ esac
 # Human label for the instance: the enclosing git repo name (else cwd basename).
 label="$(project_label "$cwd")"
 
+# Focus target — two paths, populated where applicable:
+#
+#  * `window_match`/`window_title` for plain terminal windows: the tray uses
+#    the GNOME `activate-window-by-title` extension to raise the window whose
+#    title contains `ccw:<short_id>`. We set that title here via OSC 2.
+#
+#  * `zellij_session`/`zellij_pane_id` for sessions running inside a zellij
+#    pane: the tray uses the zellij CLI to switch focus to that pane. The
+#    OSC 2 above still works inside zellij — but zellij consumes it as the
+#    *pane title* (visible within zellij's tab bar), not the outer terminal
+#    title, which is why title-based focus alone can't raise a zellij-hosted
+#    Claude session from a tray click.
+short_id="${session_id:0:8}"
+window_match="ccw:${short_id}"
+window_title="[${window_match}] Claude · ${label} · ${state}"
+zellij_session="${ZELLIJ_SESSION_NAME:-}"
+zellij_pane_id="${ZELLIJ_PANE_ID:-}"
+if [[ -z "$agent" ]]; then
+  # Subshell + `exec 2>/dev/null` swallows bash's own redirection error when
+  # /dev/tty doesn't exist (hook has no controlling tty); printf would already
+  # be silent. `|| true` keeps `set -e` happy on failure.
+  ( exec 2>/dev/null; printf '\033]2;%s\007' "$window_title" >/dev/tty ) || true
+fi
+
 now="$(date +%s)"
 pid="$(session_pid)"; [[ "$pid" =~ ^[0-9]+$ ]] || pid=0
 
@@ -148,10 +172,14 @@ jq -n \
   --arg event "$event" \
   --arg agent "$agent" \
   --arg transcript "$transcript" \
+  --arg window_match "$window_match" \
+  --arg window_title "$window_title" \
+  --arg zellij_session "$zellij_session" \
+  --arg zellij_pane_id "$zellij_pane_id" \
   --argjson ts "$now" \
   --argjson since "$since" \
   --argjson pid "$pid" \
-  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, transcript:$transcript, pid:$pid, updated:$ts, since:$since}' \
+  '{session_id:$id, label:$label, cwd:$cwd, state:$state, event:$event, agent:$agent, transcript:$transcript, pid:$pid, window_match:$window_match, window_title:$window_title, zellij_session:$zellij_session, zellij_pane_id:$zellij_pane_id, updated:$ts, since:$since}' \
   >"$tmp" && mv -f "$tmp" "$file"
 
 exit 0

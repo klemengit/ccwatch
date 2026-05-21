@@ -44,8 +44,9 @@ echo "Installing ccwatch…"
 mkdir -p "$BIN_DIR"
 fetch bin/ccwatch      "$BIN_DIR/ccwatch"
 fetch bin/ccwatch-hook "$BIN_DIR/ccwatch-hook"
-chmod +x "$BIN_DIR/ccwatch" "$BIN_DIR/ccwatch-hook"
-info "scripts -> $BIN_DIR/{ccwatch,ccwatch-hook}"
+fetch bin/ccwatch-tray "$BIN_DIR/ccwatch-tray"
+chmod +x "$BIN_DIR/ccwatch" "$BIN_DIR/ccwatch-hook" "$BIN_DIR/ccwatch-tray"
+info "scripts -> $BIN_DIR/{ccwatch,ccwatch-hook,ccwatch-tray}"
 
 HOOK_CMD="$BIN_DIR/ccwatch-hook"
 
@@ -74,6 +75,17 @@ case ":$PATH:" in
   *) echo "⚠  $BIN_DIR is not on your PATH. Add this to your shell rc:"
      echo "     export PATH=\"$BIN_DIR:\$PATH\"" ; echo ;;
 esac
+# Optional tray-icon dependency hint (GNOME top-bar indicator per session).
+if ! python3 -c 'import gi; gi.require_version("AyatanaAppIndicator3","0.1")' 2>/dev/null; then
+  echo
+  echo "Optional — for 'ccwatch-tray' (one top-bar indicator per session):"
+  echo "  sudo apt install python3-gi python3-gi-cairo \\"
+  echo "                   gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1"
+  echo "  GNOME (Wayland) click-to-focus needs the 'Activate Window by Title' extension:"
+  echo "    https://github.com/lucaswerkmeister/activate-window-by-title"
+fi
+
 echo "Next:"
 echo "  1. Restart your Claude Code sessions so they pick up the new hooks."
-echo "  2. Run 'ccwatch' in a spare terminal/zellij tab to see them."
+echo "  2. Run 'ccwatch' in a spare terminal/zellij tab to see them — or"
+echo "     'ccwatch-tray' for top-bar indicators (one per session)."

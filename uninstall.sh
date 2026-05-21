@@ -29,6 +29,6 @@ else
   echo "No valid $SETTINGS found; skipping hook removal."
 fi
 
-rm -f "$BIN_DIR/ccwatch" "$BIN_DIR/ccwatch-hook"
-echo "Removed $BIN_DIR/{ccwatch,ccwatch-hook}"
+rm -f "$BIN_DIR/ccwatch" "$BIN_DIR/ccwatch-hook" "$BIN_DIR/ccwatch-tray"
+echo "Removed $BIN_DIR/{ccwatch,ccwatch-hook,ccwatch-tray}"
 echo "Done. (Runtime registry, if any, will self-clean.)"
