@@ -6,10 +6,9 @@
 # the installer; the event name and (for Notification) the notification_type
 # drive the state.
 #
-# Background subagents (Agent/Task tool) get their own session_id and carry
-# agent_id/agent_type in the payload. They are tracked as separate, tagged rows
-# (agent field set) and removed on Subagent/Stop; the dashboard's stale/GC rules
-# clean them up if those completion events don't fire (Claude Code issue #33049).
+# Subagents (Agent/Task tool) share the parent's session_id in current Claude
+# Code, so their events would clobber the parent's row. We ignore them (see
+# below) and track only the top-level session, whose own events drive its state.
 #
 # Registry layout: $CCWATCH_DIR/<session_id>.json
 set -euo pipefail
@@ -71,19 +70,25 @@ cwd="$(jq -r '.cwd // ""' <<<"$payload")"
 event="$(jq -r '.hook_event_name // ""' <<<"$payload")"
 notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
 tool_name="$(jq -r '.tool_name // ""' <<<"$payload")"
+agent_id="$(jq -r '.agent_id // ""' <<<"$payload")"
+agent_type="$(jq -r '.agent_type // ""' <<<"$payload")"
 transcript="$(jq -r '.transcript_path // ""' <<<"$payload")"
 
 file="$STATE_DIR/$session_id.json"
 
-# Subagent tagging is intentionally disabled. In current Claude Code a subagent
-# (Agent/Task tool) does NOT get its own session_id — it shares the parent's,
-# and the parent's PreToolUse/PostToolUse payloads carry the subagent's
-# agent_id/agent_type. Deriving `agent` from those therefore mis-tags the
-# *parent* session: a spurious "↳" in the tray, and — because tagged rows lose
-# PID-liveness — premature GC in the dashboard. Likewise SubagentStop shares the
-# parent's file, so removing on it would delete the live parent. We keep the
-# field (empty) for compatibility with readers, and only SessionEnd removes.
+# In current Claude Code a subagent (Agent/Task tool) shares the parent's
+# session_id, so its hook events — the Subagent* events, plus the tool calls it
+# makes, which carry agent_id/agent_type — would clobber the parent's row.
+# Worst case they leave the parent stuck "working" after it has gone idle: a
+# background agent finishing fires SubagentStop with no following parent event
+# to correct it. These events don't describe the top-level session's state, so
+# ignore them and let the parent's own events drive it. (Tagging is likewise
+# disabled — `agent` stays empty — so the dashboard keeps PID-liveness and a
+# subagent's Stop can't delete the live parent's file.)
 agent=""
+if [[ -n "$agent_id" || -n "$agent_type" || "$event" == Subagent* ]]; then
+  exit 0
+fi
 
 if [[ "$event" == "SessionEnd" ]]; then
   rm -f "$file"
@@ -95,10 +100,9 @@ fi
 # / elicitation form).
 case "$event" in
   SessionStart)      state="idle" ;;
-  Stop)              state="idle" ;;     # (top-level only; subagent Stop removed above)
+  Stop)              state="idle" ;;     # end of a top-level turn
   UserPromptSubmit)  state="working" ;;
   PostToolUse)       state="working" ;;  # heartbeat: fires on every tool call
-  SubagentStart)     state="working" ;;
   PreToolUse)
     # AskUserQuestion blocks for the user's answer (no Notification fires for it);
     # every other tool means Claude is actively working.
