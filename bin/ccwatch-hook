@@ -71,23 +71,21 @@ cwd="$(jq -r '.cwd // ""' <<<"$payload")"
 event="$(jq -r '.hook_event_name // ""' <<<"$payload")"
 notif_type="$(jq -r '.notification_type // ""' <<<"$payload")"
 tool_name="$(jq -r '.tool_name // ""' <<<"$payload")"
-agent_id="$(jq -r '.agent_id // ""' <<<"$payload")"
-agent_type="$(jq -r '.agent_type // ""' <<<"$payload")"
 transcript="$(jq -r '.transcript_path // ""' <<<"$payload")"
 
 file="$STATE_DIR/$session_id.json"
 
-# Is this a subagent context? (own session_id + agent_id/agent_type, or a
-# Subagent* event). The label tag we store; empty for top-level sessions.
+# Subagent tagging is intentionally disabled. In current Claude Code a subagent
+# (Agent/Task tool) does NOT get its own session_id — it shares the parent's,
+# and the parent's PreToolUse/PostToolUse payloads carry the subagent's
+# agent_id/agent_type. Deriving `agent` from those therefore mis-tags the
+# *parent* session: a spurious "↳" in the tray, and — because tagged rows lose
+# PID-liveness — premature GC in the dashboard. Likewise SubagentStop shares the
+# parent's file, so removing on it would delete the live parent. We keep the
+# field (empty) for compatibility with readers, and only SessionEnd removes.
 agent=""
-if [[ -n "$agent_id" || -n "$agent_type" || "$event" == Subagent* ]]; then
-  agent="${agent_type:-agent}"
-fi
 
-# Events that remove the entry: session ended, or a subagent finished. A Stop in
-# a subagent context also means that subagent is done.
-if [[ "$event" == "SessionEnd" || "$event" == "SubagentStop" \
-   || ( -n "$agent" && "$event" == "Stop" ) ]]; then
+if [[ "$event" == "SessionEnd" ]]; then
   rm -f "$file"
   exit 0
 fi

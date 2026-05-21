@@ -159,6 +159,8 @@ class SessionIndicator:
     def __init__(self, session_id: str, data: dict) -> None:
         self.session_id = session_id
         self.data: dict = {}
+        self._label_text = ""
+        self._nudges_left = 3
         # new_with_path tells AppIndicator where to look up icon NAMES — that
         # is the path the GNOME 'AppIndicator support' extension actually uses
         # to resolve `cc-idle`/`cc-working`/etc. into PNGs.
@@ -190,17 +192,42 @@ class SessionIndicator:
         self.indicator.set_secondary_activate_target(self.focus_item)
 
         self.update(data, stale=False)
+        # The ubuntu-appindicators panel extension learns the label ONLY from
+        # the XAyatanaNewLabel DBus signal. If its proxy isn't connected when we
+        # first set the label at creation it misses that signal and never
+        # re-reads — so the name that's sitting on the bus is never painted
+        # (this is the "name shows only sometimes" symptom). Once the proxy is
+        # up, re-emit a genuine label change a few times to be caught.
+        GLib.timeout_add(1500, self._renudge_label)
+
+    def _set_label(self, text: str) -> None:
+        # `guide` reserves layout width so the bar doesn't jiggle on rename.
+        self.indicator.set_label(text, "M" * LABEL_LEN)
+        self._label_text = text
+
+    def _renudge_label(self) -> bool:
+        # libayatana coalesces label changes within one main-loop iteration, so
+        # a clear-then-restore in the same tick emits nothing. Instead set a
+        # visually identical variant (trailing space) now and restore the clean
+        # text on the next tick — two distinct XAyatanaNewLabel emissions the
+        # extension can't miss. Repeat a few times in case the proxy is slow.
+        guide = "M" * LABEL_LEN
+        self.indicator.set_label(self._label_text + " ", guide)
+        GLib.timeout_add(200, self._restore_label)
+        self._nudges_left -= 1
+        return self._nudges_left > 0  # re-fire every 1500ms until exhausted
+
+    def _restore_label(self) -> bool:
+        self.indicator.set_label(self._label_text, "M" * LABEL_LEN)
+        return False  # one-shot
 
     def update(self, data: dict, stale: bool) -> None:
         self.data = data
         state = "stale" if stale else (data.get("state") or "idle")
         project = (data.get("label") or "?")
         label_text = project[:LABEL_LEN]
-        if data.get("agent"):
-            label_text = "↳" + label_text[: max(0, LABEL_LEN - 1)]
         self.indicator.set_icon_full(icon_name(state), f"{project} ({state})")
-        # `guide` reserves layout width so the bar doesn't jiggle on rename.
-        self.indicator.set_label(label_text, "M" * LABEL_LEN)
+        self._set_label(label_text)
         self.indicator.set_title(f"Claude — {project} — {state}")
 
         pretty_state = state.replace("_", " ")
